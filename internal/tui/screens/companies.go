@@ -70,6 +70,24 @@ func (c *Companies) loadData() tea.Msg {
 }
 
 func (c *Companies) Update(msg tea.Msg) tea.Cmd {
+	// In input mode, pass messages to text input first
+	if c.mode == companiesModeAdd || c.mode == companiesModeEdit {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "enter":
+				return c.handleInputKey()
+			case "esc":
+				c.mode = companiesModeList
+				c.input.Blur()
+				return nil
+			}
+		}
+		// Pass all other messages to text input
+		var cmd tea.Cmd
+		c.input, cmd = c.input.Update(msg)
+		return cmd
+	}
+
 	switch msg := msg.(type) {
 	case companiesDataMsg:
 		c.loading = false
@@ -87,12 +105,6 @@ func (c *Companies) Update(msg tea.Msg) tea.Cmd {
 		return c.handleKey(msg)
 	}
 
-	if c.mode == companiesModeAdd || c.mode == companiesModeEdit {
-		var cmd tea.Cmd
-		c.input, cmd = c.input.Update(msg)
-		return cmd
-	}
-
 	return nil
 }
 
@@ -100,8 +112,6 @@ func (c *Companies) handleKey(msg tea.KeyMsg) tea.Cmd {
 	switch c.mode {
 	case companiesModeList:
 		return c.handleListKey(msg)
-	case companiesModeAdd, companiesModeEdit:
-		return c.handleInputKey(msg)
 	case companiesModeDelete:
 		return c.handleDeleteKey(msg)
 	}
@@ -143,40 +153,33 @@ func (c *Companies) handleListKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-func (c *Companies) handleInputKey(msg tea.KeyMsg) tea.Cmd {
-	switch msg.String() {
-	case "enter":
-		name := strings.TrimSpace(c.input.Value())
-		if name == "" {
-			c.mode = companiesModeList
-			return nil
-		}
-
-		repo := repository.NewCompanyRepo(c.db)
-		if c.mode == companiesModeAdd {
-			_, err := repo.Create(name)
-			if err != nil {
-				c.err = err
-			} else {
-				c.message = fmt.Sprintf("Created company: %s", name)
-			}
-		} else {
-			err := repo.Update(c.companies[c.cursor].ID, name)
-			if err != nil {
-				c.err = err
-			} else {
-				c.message = fmt.Sprintf("Updated company: %s", name)
-			}
-		}
+func (c *Companies) handleInputKey() tea.Cmd {
+	name := strings.TrimSpace(c.input.Value())
+	if name == "" {
 		c.mode = companiesModeList
 		c.input.Blur()
-		return c.loadData
-
-	case "esc":
-		c.mode = companiesModeList
-		c.input.Blur()
+		return nil
 	}
-	return nil
+
+	repo := repository.NewCompanyRepo(c.db)
+	if c.mode == companiesModeAdd {
+		_, err := repo.Create(name)
+		if err != nil {
+			c.err = err
+		} else {
+			c.message = fmt.Sprintf("Created company: %s", name)
+		}
+	} else {
+		err := repo.Update(c.companies[c.cursor].ID, name)
+		if err != nil {
+			c.err = err
+		} else {
+			c.message = fmt.Sprintf("Updated company: %s", name)
+		}
+	}
+	c.mode = companiesModeList
+	c.input.Blur()
+	return c.loadData
 }
 
 func (c *Companies) handleDeleteKey(msg tea.KeyMsg) tea.Cmd {

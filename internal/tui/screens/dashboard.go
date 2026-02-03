@@ -7,25 +7,32 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/emilianohg/anchorman/internal/db"
 	"github.com/emilianohg/anchorman/internal/repository"
 )
 
 type Dashboard struct {
-	db     *sql.DB
-	width  int
-	height int
+	database *sql.DB
+	width    int
+	height   int
 
-	unprocessedCount int
-	lastProcessed    string
-	companies        []repository.CompanyWithStats
-	loading          bool
-	err              error
+	unprocessedCount  int
+	lastProcessed     string
+	companies         []repository.CompanyWithStats
+	migrationPending  bool
+	migrationCurrent  uint
+	migrationLatest   uint
+	migrationDirty    bool
+	loading           bool
+	migrating         bool
+	err               error
+	message           string
 }
 
-func NewDashboard(db *sql.DB) *Dashboard {
+func NewDashboard(database *sql.DB) *Dashboard {
 	return &Dashboard{
-		db:      db,
-		loading: true,
+		database: database,
+		loading:  true,
 	}
 }
 
@@ -38,17 +45,43 @@ type dashboardDataMsg struct {
 	unprocessedCount int
 	lastProcessed    string
 	companies        []repository.CompanyWithStats
+	migrationPending bool
+	migrationCurrent uint
+	migrationLatest  uint
+	migrationDirty   bool
 	err              error
+}
+
+type migrationCompleteMsg struct {
+	err error
 }
 
 func (d *Dashboard) Init() tea.Cmd {
 	d.loading = true
+	d.message = ""
 	return d.loadData
 }
 
 func (d *Dashboard) loadData() tea.Msg {
-	commitRepo := repository.NewCommitRepo(d.db)
-	companyRepo := repository.NewCompanyRepo(d.db)
+	// Check migration status first
+	status, err := db.GetMigrationStatus()
+	if err != nil {
+		return dashboardDataMsg{err: err}
+	}
+
+	// If migrations are pending, return early with just migration info
+	if status.Pending || status.Dirty {
+		return dashboardDataMsg{
+			migrationPending: status.Pending,
+			migrationCurrent: status.CurrentVersion,
+			migrationLatest:  status.LatestVersion,
+			migrationDirty:   status.Dirty,
+		}
+	}
+
+	// Load normal dashboard data
+	commitRepo := repository.NewCommitRepo(d.database)
+	companyRepo := repository.NewCompanyRepo(d.database)
 
 	unprocessed, err := commitRepo.CountUnprocessed()
 	if err != nil {
@@ -74,7 +107,15 @@ func (d *Dashboard) loadData() tea.Msg {
 		unprocessedCount: unprocessed,
 		lastProcessed:    lastProcessed,
 		companies:        companies,
+		migrationPending: false,
+		migrationCurrent: status.CurrentVersion,
+		migrationLatest:  status.LatestVersion,
 	}
+}
+
+func (d *Dashboard) runMigrations() tea.Msg {
+	err := db.RunMigrations()
+	return migrationCompleteMsg{err: err}
 }
 
 func (d *Dashboard) Update(msg tea.Msg) tea.Cmd {
@@ -85,12 +126,38 @@ func (d *Dashboard) Update(msg tea.Msg) tea.Cmd {
 		d.unprocessedCount = msg.unprocessedCount
 		d.lastProcessed = msg.lastProcessed
 		d.companies = msg.companies
+		d.migrationPending = msg.migrationPending
+		d.migrationCurrent = msg.migrationCurrent
+		d.migrationLatest = msg.migrationLatest
+		d.migrationDirty = msg.migrationDirty
 		return nil
+
+	case migrationCompleteMsg:
+		d.migrating = false
+		if msg.err != nil {
+			d.err = msg.err
+			return nil
+		}
+		d.message = "Migrations completed successfully!"
+		return d.loadData
 
 	case RefreshMsg:
 		return d.Init()
 
 	case tea.KeyMsg:
+		// Handle migration mode
+		if d.migrationPending || d.migrationDirty {
+			switch msg.String() {
+			case "m":
+				d.migrating = true
+				return d.runMigrations
+			case "q":
+				return tea.Quit
+			}
+			return nil
+		}
+
+		// Normal mode
 		switch msg.String() {
 		case "p":
 			return Navigate("process")
@@ -114,6 +181,11 @@ func (d *Dashboard) View() string {
 	b.WriteString(SubtitleStyle.Render("Git Activity Tracker"))
 	b.WriteString("\n\n")
 
+	if d.migrating {
+		b.WriteString("Running migrations...\n")
+		return b.String()
+	}
+
 	if d.loading {
 		b.WriteString("Loading...\n")
 		return b.String()
@@ -121,15 +193,27 @@ func (d *Dashboard) View() string {
 
 	if d.err != nil {
 		b.WriteString(ErrorStyle.Render(fmt.Sprintf("Error: %v", d.err)))
-		b.WriteString("\n")
+		b.WriteString("\n\n")
+		b.WriteString(HelpStyle.Render("[q] Quit"))
 		return b.String()
+	}
+
+	// Show migration warning if pending
+	if d.migrationPending || d.migrationDirty {
+		return d.viewMigrationPending(&b)
+	}
+
+	if d.message != "" {
+		b.WriteString(SuccessStyle.Render(d.message))
+		b.WriteString("\n\n")
 	}
 
 	// Stats box
 	statsContent := fmt.Sprintf(
-		"Unprocessed commits: %s\nLast processed: %s",
+		"Unprocessed commits: %s\nLast processed: %s\nSchema version: %d",
 		d.formatUnprocessed(),
 		d.lastProcessed,
+		d.migrationCurrent,
 	)
 	b.WriteString(BoxStyle.Render(statsContent))
 	b.WriteString("\n\n")
@@ -155,6 +239,28 @@ func (d *Dashboard) View() string {
 	// Help
 	help := "[p] Process commits  [c] Companies  [o] Repos  [r] Reports  [q] Quit"
 	b.WriteString(HelpStyle.Render(help))
+
+	return b.String()
+}
+
+func (d *Dashboard) viewMigrationPending(b *strings.Builder) string {
+	b.WriteString(WarningStyle.Render("DATABASE UPDATE REQUIRED"))
+	b.WriteString("\n\n")
+
+	if d.migrationDirty {
+		b.WriteString(ErrorStyle.Render("Warning: Database is in a dirty state from a failed migration."))
+		b.WriteString("\n")
+		b.WriteString("You may need to manually fix this before proceeding.\n\n")
+	}
+
+	b.WriteString(fmt.Sprintf("Current schema version: %d\n", d.migrationCurrent))
+	b.WriteString(fmt.Sprintf("Latest schema version:  %d\n", d.migrationLatest))
+	b.WriteString(fmt.Sprintf("Pending migrations: %d\n\n", d.migrationLatest-d.migrationCurrent))
+
+	b.WriteString("A new version of anchorman includes database changes.\n")
+	b.WriteString("Press 'm' to run migrations and update your database.\n\n")
+
+	b.WriteString(HelpStyle.Render("[m] Run migrations  [q] Quit"))
 
 	return b.String()
 }

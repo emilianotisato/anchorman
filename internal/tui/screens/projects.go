@@ -90,6 +90,24 @@ func (p *Projects) loadData() tea.Msg {
 }
 
 func (p *Projects) Update(msg tea.Msg) tea.Cmd {
+	// In input mode, pass messages to text input first
+	if p.mode == projectsModeAdd || p.mode == projectsModeEdit {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "enter":
+				return p.handleInputKey()
+			case "esc":
+				p.mode = projectsModeList
+				p.input.Blur()
+				return nil
+			}
+		}
+		// Pass all other messages to text input
+		var cmd tea.Cmd
+		p.input, cmd = p.input.Update(msg)
+		return cmd
+	}
+
 	switch msg := msg.(type) {
 	case projectsDataMsg:
 		p.loading = false
@@ -120,12 +138,6 @@ func (p *Projects) Update(msg tea.Msg) tea.Cmd {
 		return p.handleKey(msg)
 	}
 
-	if p.mode == projectsModeAdd || p.mode == projectsModeEdit {
-		var cmd tea.Cmd
-		p.input, cmd = p.input.Update(msg)
-		return cmd
-	}
-
 	return nil
 }
 
@@ -133,8 +145,6 @@ func (p *Projects) handleKey(msg tea.KeyMsg) tea.Cmd {
 	switch p.mode {
 	case projectsModeList:
 		return p.handleListKey(msg)
-	case projectsModeAdd, projectsModeEdit:
-		return p.handleInputKey(msg)
 	case projectsModeDelete:
 		return p.handleDeleteKey(msg)
 	case projectsModeMove:
@@ -185,40 +195,33 @@ func (p *Projects) handleListKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-func (p *Projects) handleInputKey(msg tea.KeyMsg) tea.Cmd {
-	switch msg.String() {
-	case "enter":
-		name := strings.TrimSpace(p.input.Value())
-		if name == "" {
-			p.mode = projectsModeList
-			return nil
-		}
-
-		repo := repository.NewProjectRepo(p.db)
-		if p.mode == projectsModeAdd {
-			_, err := repo.Create(name, p.companyFilter)
-			if err != nil {
-				p.err = err
-			} else {
-				p.message = fmt.Sprintf("Created project: %s", name)
-			}
-		} else {
-			err := repo.Update(p.projects[p.cursor].ID, name)
-			if err != nil {
-				p.err = err
-			} else {
-				p.message = fmt.Sprintf("Updated project: %s", name)
-			}
-		}
+func (p *Projects) handleInputKey() tea.Cmd {
+	name := strings.TrimSpace(p.input.Value())
+	if name == "" {
 		p.mode = projectsModeList
 		p.input.Blur()
-		return p.loadData
-
-	case "esc":
-		p.mode = projectsModeList
-		p.input.Blur()
+		return nil
 	}
-	return nil
+
+	repo := repository.NewProjectRepo(p.db)
+	if p.mode == projectsModeAdd {
+		_, err := repo.Create(name, p.companyFilter)
+		if err != nil {
+			p.err = err
+		} else {
+			p.message = fmt.Sprintf("Created project: %s", name)
+		}
+	} else {
+		err := repo.Update(p.projects[p.cursor].ID, name)
+		if err != nil {
+			p.err = err
+		} else {
+			p.message = fmt.Sprintf("Updated project: %s", name)
+		}
+	}
+	p.mode = projectsModeList
+	p.input.Blur()
+	return p.loadData
 }
 
 func (p *Projects) handleDeleteKey(msg tea.KeyMsg) tea.Cmd {

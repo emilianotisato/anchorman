@@ -25,13 +25,23 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Open database
+		// Open database (migrations will be checked in dashboard)
 		database, err := db.Open()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 			os.Exit(1)
 		}
 		defer db.Close()
+
+		// Run initial migration if this is a fresh database
+		// This handles first-time setup without user interaction
+		status, _ := db.GetMigrationStatus()
+		if status != nil && status.CurrentVersion == 0 {
+			if err := db.RunMigrations(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error running initial migrations: %v\n", err)
+				os.Exit(1)
+			}
+		}
 
 		// Launch TUI
 		if err := tui.Run(database, cfg); err != nil {
