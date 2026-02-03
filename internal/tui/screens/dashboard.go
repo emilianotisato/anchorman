@@ -17,6 +17,7 @@ type Dashboard struct {
 	height   int
 
 	unprocessedCount  int
+	orphanReposCount  int
 	lastProcessed     string
 	companies         []repository.CompanyWithStats
 	migrationPending  bool
@@ -43,6 +44,7 @@ func (d *Dashboard) SetSize(width, height int) {
 
 type dashboardDataMsg struct {
 	unprocessedCount int
+	orphanReposCount int
 	lastProcessed    string
 	companies        []repository.CompanyWithStats
 	migrationPending bool
@@ -82,8 +84,14 @@ func (d *Dashboard) loadData() tea.Msg {
 	// Load normal dashboard data
 	commitRepo := repository.NewCommitRepo(d.database)
 	companyRepo := repository.NewCompanyRepo(d.database)
+	repoRepo := repository.NewRepoRepo(d.database)
 
 	unprocessed, err := commitRepo.CountUnprocessed()
+	if err != nil {
+		return dashboardDataMsg{err: err}
+	}
+
+	orphanRepos, err := repoRepo.GetOrphans()
 	if err != nil {
 		return dashboardDataMsg{err: err}
 	}
@@ -105,6 +113,7 @@ func (d *Dashboard) loadData() tea.Msg {
 
 	return dashboardDataMsg{
 		unprocessedCount: unprocessed,
+		orphanReposCount: len(orphanRepos),
 		lastProcessed:    lastProcessed,
 		companies:        companies,
 		migrationPending: false,
@@ -124,6 +133,7 @@ func (d *Dashboard) Update(msg tea.Msg) tea.Cmd {
 		d.loading = false
 		d.err = msg.err
 		d.unprocessedCount = msg.unprocessedCount
+		d.orphanReposCount = msg.orphanReposCount
 		d.lastProcessed = msg.lastProcessed
 		d.companies = msg.companies
 		d.migrationPending = msg.migrationPending
@@ -210,10 +220,10 @@ func (d *Dashboard) View() string {
 
 	// Stats box
 	statsContent := fmt.Sprintf(
-		"Unprocessed commits: %s\nLast processed: %s\nSchema version: %d",
+		"Unprocessed commits: %s\nOrphan repos: %s\nLast processed: %s",
 		d.formatUnprocessed(),
+		d.formatOrphanRepos(),
 		d.lastProcessed,
-		d.migrationCurrent,
 	)
 	b.WriteString(BoxStyle.Render(statsContent))
 	b.WriteString("\n\n")
@@ -270,4 +280,11 @@ func (d *Dashboard) formatUnprocessed() string {
 		return SuccessStyle.Render("0")
 	}
 	return WarningStyle.Render(fmt.Sprintf("%d", d.unprocessedCount))
+}
+
+func (d *Dashboard) formatOrphanRepos() string {
+	if d.orphanReposCount == 0 {
+		return SuccessStyle.Render("0")
+	}
+	return WarningStyle.Render(fmt.Sprintf("%d (press 'o' to assign)", d.orphanReposCount))
 }
