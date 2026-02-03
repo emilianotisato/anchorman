@@ -8,25 +8,29 @@ import (
 	"strings"
 )
 
-const postCommitHook = `#!/bin/bash
+func postCommitHook(anchormanPath string) string {
+	return fmt.Sprintf(`#!/bin/bash
 # Anchorman post-commit hook
 # Chain existing hook if present
 if [ -x "$0.legacy" ]; then
     "$0.legacy" "$@"
 fi
 # Ingest commit (silent, non-blocking)
-anchorman ingest 2>/dev/null &
-`
+%s ingest 2>/dev/null &
+`, anchormanPath)
+}
 
-const postMergeHook = `#!/bin/bash
+func postMergeHook(anchormanPath string) string {
+	return fmt.Sprintf(`#!/bin/bash
 # Anchorman post-merge hook
 # Chain existing hook if present
 if [ -x "$0.legacy" ]; then
     "$0.legacy" "$@"
 fi
 # Ingest commit (silent, non-blocking)
-anchorman ingest 2>/dev/null &
-`
+%s ingest 2>/dev/null &
+`, anchormanPath)
+}
 
 // HooksDir returns the global git hooks directory
 func HooksDir() (string, error) {
@@ -44,6 +48,29 @@ func Install() error {
 		return err
 	}
 
+	// Find the full path to anchorman binary
+	anchormanPath, err := exec.LookPath("anchorman")
+	if err != nil {
+		// Try common locations
+		homeDir, _ := os.UserHomeDir()
+		candidates := []string{
+			filepath.Join(homeDir, ".local", "bin", "anchorman"),
+			"/usr/local/bin/anchorman",
+			"/usr/bin/anchorman",
+		}
+		for _, candidate := range candidates {
+			if _, err := os.Stat(candidate); err == nil {
+				anchormanPath = candidate
+				break
+			}
+		}
+		if anchormanPath == "" {
+			return fmt.Errorf("could not find anchorman binary. Make sure it's installed and in your PATH")
+		}
+	}
+
+	fmt.Printf("Using anchorman at: %s\n", anchormanPath)
+
 	// Create hooks directory
 	if err := os.MkdirAll(hooksDir, 0755); err != nil {
 		return fmt.Errorf("failed to create hooks directory: %w", err)
@@ -60,12 +87,12 @@ func Install() error {
 	}
 
 	// Install post-commit hook
-	if err := installHook(hooksDir, "post-commit", postCommitHook); err != nil {
+	if err := installHook(hooksDir, "post-commit", postCommitHook(anchormanPath)); err != nil {
 		return err
 	}
 
 	// Install post-merge hook
-	if err := installHook(hooksDir, "post-merge", postMergeHook); err != nil {
+	if err := installHook(hooksDir, "post-merge", postMergeHook(anchormanPath)); err != nil {
 		return err
 	}
 
