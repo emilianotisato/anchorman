@@ -1,0 +1,9 @@
+{
+  "before": [],
+  "copy": [
+    ".env",
+    "node_modules",
+    "vendor"
+  ],
+  "after": []
+}
