@@ -181,18 +181,28 @@ func (r *CommitRepo) CountUnprocessed() (int, error) {
 }
 
 func (r *CommitRepo) GetLastProcessedTime() (*time.Time, error) {
-	var lastTime sql.NullTime
+	var lastTimeStr sql.NullString
 	err := r.db.QueryRow(`
 		SELECT MAX(created_at) FROM tasks
-	`).Scan(&lastTime)
+	`).Scan(&lastTimeStr)
 
 	if err != nil {
 		return nil, err
 	}
 
-	if !lastTime.Valid {
+	if !lastTimeStr.Valid || lastTimeStr.String == "" {
 		return nil, nil
 	}
 
-	return &lastTime.Time, nil
+	// Parse SQLite datetime string
+	lastTime, err := time.Parse("2006-01-02 15:04:05", lastTimeStr.String)
+	if err != nil {
+		// Try with timezone
+		lastTime, err = time.Parse("2006-01-02T15:04:05Z", lastTimeStr.String)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &lastTime, nil
 }

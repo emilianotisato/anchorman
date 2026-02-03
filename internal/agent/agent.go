@@ -29,7 +29,10 @@ type CodexAgent struct{}
 func (a *CodexAgent) Process(projectName string, commits []models.RawCommit) ([]string, error) {
 	prompt := buildPrompt(projectName, commits)
 
-	cmd := exec.Command("codex", "-q", prompt)
+	// Use codex exec for non-interactive mode, pass prompt via stdin
+	cmd := exec.Command("codex", "exec", "-")
+	cmd.Stdin = strings.NewReader(prompt)
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -46,7 +49,9 @@ type ClaudeAgent struct{}
 func (a *ClaudeAgent) Process(projectName string, commits []models.RawCommit) ([]string, error) {
 	prompt := buildPrompt(projectName, commits)
 
+	// Use claude -p for non-interactive print mode
 	cmd := exec.Command("claude", "-p", prompt)
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
