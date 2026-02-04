@@ -63,6 +63,7 @@ type Reports struct {
 	err             error
 	message         string
 	showTime        bool // toggle to show/hide time estimates
+	showAuthors     bool // toggle to show/hide authors
 }
 
 func NewReports(db *sql.DB, cfg *config.Config) *Reports {
@@ -123,7 +124,19 @@ func (r *Reports) loadPreview() tea.Msg {
 	from, to := r.getDateRange()
 	taskRepo := repository.NewTaskRepo(r.db)
 	tasks, err := taskRepo.GetByCompanyAndDateRange(*r.companyFilter, from, to)
-	return previewDataMsg{tasks: tasks, err: err}
+	if err != nil {
+		return previewDataMsg{err: err}
+	}
+
+	// Populate authors for each task
+	for i := range tasks {
+		authors, err := taskRepo.GetAuthorsForCommits(tasks[i].SourceCommits)
+		if err == nil {
+			tasks[i].Authors = authors
+		}
+	}
+
+	return previewDataMsg{tasks: tasks, err: nil}
 }
 
 func (r *Reports) generateReport() tea.Msg {
@@ -147,6 +160,16 @@ func (r *Reports) generateReport() tea.Msg {
 		return generateCompleteMsg{err: err}
 	}
 
+	// Populate authors for each task if needed
+	if r.showAuthors {
+		for i := range tasks {
+			authors, err := taskRepo.GetAuthorsForCommits(tasks[i].SourceCommits)
+			if err == nil {
+				tasks[i].Authors = authors
+			}
+		}
+	}
+
 	// Group tasks by project
 	tasksByProject := make(map[string][]models.Task)
 	for _, t := range tasks {
@@ -163,13 +186,25 @@ func (r *Reports) generateReport() tea.Msg {
 	var totalHours float64
 	for projectName, projectTasks := range tasksByProject {
 		md.WriteString(fmt.Sprintf("## %s\n\n", projectName))
+
+		// Show project contributors if authors enabled
+		if r.showAuthors {
+			projectAuthors := r.getProjectAuthors(projectTasks)
+			if len(projectAuthors) > 0 {
+				md.WriteString(fmt.Sprintf("**Contributors:** %s\n\n", strings.Join(projectAuthors, ", ")))
+			}
+		}
+
 		var projectHours float64
 		for _, t := range projectTasks {
-			if r.showTime {
-				md.WriteString(fmt.Sprintf("- %s (%.1fh)\n", t.Description, t.EstimatedHours))
-			} else {
-				md.WriteString(fmt.Sprintf("- %s\n", t.Description))
+			taskLine := "- " + t.Description
+			if r.showAuthors && len(t.Authors) > 0 {
+				taskLine += " (" + strings.Join(t.Authors, ", ") + ")"
 			}
+			if r.showTime {
+				taskLine += fmt.Sprintf(" (%.1fh)", t.EstimatedHours)
+			}
+			md.WriteString(taskLine + "\n")
 			projectHours += t.EstimatedHours
 		}
 		if r.showTime {
@@ -334,6 +369,8 @@ func (r *Reports) handleRangeKey(msg tea.KeyMsg) tea.Cmd {
 		return r.loadPreview
 	case "t":
 		r.showTime = !r.showTime
+	case "a":
+		r.showAuthors = !r.showAuthors
 	case "esc":
 		r.mode = reportsModeSelectCompany
 		r.companyFilter = nil
@@ -351,6 +388,8 @@ func (r *Reports) handlePreviewKey(msg tea.KeyMsg) tea.Cmd {
 		return r.generateReport
 	case "t":
 		r.showTime = !r.showTime
+	case "a":
+		r.showAuthors = !r.showAuthors
 	case "esc":
 		r.mode = reportsModeSelectRange
 	case "q":
@@ -432,11 +471,17 @@ func (r *Reports) viewSelectRange(b *strings.Builder) string {
 		}
 	}
 
-	// Show time toggle status
+	// Show toggle statuses
 	if r.showTime {
 		b.WriteString(SuccessStyle.Render("Time estimates: ON"))
 	} else {
 		b.WriteString(DimStyle.Render("Time estimates: OFF"))
+	}
+	b.WriteString("  ")
+	if r.showAuthors {
+		b.WriteString(SuccessStyle.Render("Authors: ON"))
+	} else {
+		b.WriteString(DimStyle.Render("Authors: OFF"))
 	}
 	b.WriteString("\n\n")
 
@@ -454,7 +499,7 @@ func (r *Reports) viewSelectRange(b *strings.Builder) string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(HelpStyle.Render("[enter] Select  [t] Toggle time  [esc] Back"))
+	b.WriteString(HelpStyle.Render("[enter] Select  [t] Toggle time  [a] Toggle authors  [esc] Back"))
 
 	return b.String()
 }
@@ -470,11 +515,17 @@ func (r *Reports) viewPreview(b *strings.Builder) string {
 	from, to := r.getDateRange()
 	b.WriteString(fmt.Sprintf("Period: %s - %s\n", from.Format("Jan 02"), to.Format("Jan 02, 2006")))
 
-	// Show time toggle status
+	// Show toggle statuses
 	if r.showTime {
 		b.WriteString(SuccessStyle.Render("Time estimates: ON"))
 	} else {
 		b.WriteString(DimStyle.Render("Time estimates: OFF"))
+	}
+	b.WriteString("  ")
+	if r.showAuthors {
+		b.WriteString(SuccessStyle.Render("Authors: ON"))
+	} else {
+		b.WriteString(DimStyle.Render("Authors: OFF"))
 	}
 	b.WriteString("\n\n")
 
@@ -494,14 +545,26 @@ func (r *Reports) viewPreview(b *strings.Builder) string {
 		var totalHours float64
 		for projectName, tasks := range tasksByProject {
 			b.WriteString(SubtitleStyle.Render(projectName))
+
+			// Show project contributors if authors enabled
+			if r.showAuthors {
+				projectAuthors := r.getProjectAuthors(tasks)
+				if len(projectAuthors) > 0 {
+					b.WriteString(fmt.Sprintf(" - %s", DimStyle.Render(strings.Join(projectAuthors, ", "))))
+				}
+			}
 			b.WriteString("\n")
+
 			var projectHours float64
 			for _, t := range tasks {
-				if r.showTime {
-					b.WriteString(fmt.Sprintf("  - %s (%.1fh)\n", t.Description, t.EstimatedHours))
-				} else {
-					b.WriteString(fmt.Sprintf("  - %s\n", t.Description))
+				taskLine := "  - " + t.Description
+				if r.showAuthors && len(t.Authors) > 0 {
+					taskLine += " (" + strings.Join(t.Authors, ", ") + ")"
 				}
+				if r.showTime {
+					taskLine += fmt.Sprintf(" (%.1fh)", t.EstimatedHours)
+				}
+				b.WriteString(taskLine + "\n")
 				projectHours += t.EstimatedHours
 			}
 			if r.showTime {
@@ -520,12 +583,27 @@ func (r *Reports) viewPreview(b *strings.Builder) string {
 
 	b.WriteString("\n")
 	if len(r.previewTasks) > 0 {
-		b.WriteString(HelpStyle.Render("[g/enter] Generate  [t] Toggle time  [esc] Back"))
+		b.WriteString(HelpStyle.Render("[g/enter] Generate  [t] Toggle time  [a] Toggle authors  [esc] Back"))
 	} else {
-		b.WriteString(HelpStyle.Render("[t] Toggle time  [esc] Back  [q] Cancel"))
+		b.WriteString(HelpStyle.Render("[t] Toggle time  [a] Toggle authors  [esc] Back  [q] Cancel"))
 	}
 
 	return b.String()
+}
+
+// getProjectAuthors returns unique authors for all tasks in a project
+func (r *Reports) getProjectAuthors(tasks []models.Task) []string {
+	seen := make(map[string]bool)
+	var authors []string
+	for _, t := range tasks {
+		for _, a := range t.Authors {
+			if !seen[a] {
+				seen[a] = true
+				authors = append(authors, a)
+			}
+		}
+	}
+	return authors
 }
 
 func (r *Reports) viewComplete(b *strings.Builder) string {

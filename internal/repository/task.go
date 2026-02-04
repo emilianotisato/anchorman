@@ -3,6 +3,7 @@ package repository
 import (
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/emilianohg/anchorman/internal/models"
@@ -142,4 +143,93 @@ func (r *TaskRepo) Delete(id int64) error {
 func (r *TaskRepo) DeleteByProjectID(projectID int64) error {
 	_, err := r.db.Exec("DELETE FROM tasks WHERE project_id = ?", projectID)
 	return err
+}
+
+// DeleteTasksWithCommit deletes tasks where source_commits contains the given commit ID
+func (r *TaskRepo) DeleteTasksWithCommit(commitID int64) (int, error) {
+	// SQLite JSON query to find tasks containing this commit ID
+	result, err := r.db.Exec(`
+		DELETE FROM tasks
+		WHERE EXISTS (
+			SELECT 1 FROM json_each(source_commits)
+			WHERE json_each.value = ?
+		)
+	`, commitID)
+	if err != nil {
+		return 0, err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	return int(affected), nil
+}
+
+// GetAuthorsForCommits returns unique authors for the given commit IDs, formatted as "John D."
+func (r *TaskRepo) GetAuthorsForCommits(commitIDs []int64) ([]string, error) {
+	if len(commitIDs) == 0 {
+		return []string{}, nil
+	}
+
+	placeholders := ""
+	args := make([]interface{}, len(commitIDs))
+	for i, id := range commitIDs {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args[i] = id
+	}
+
+	rows, err := r.db.Query(
+		"SELECT DISTINCT author FROM raw_commits WHERE id IN ("+placeholders+")",
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	seen := make(map[string]bool)
+	var authors []string
+	for rows.Next() {
+		var author string
+		if err := rows.Scan(&author); err != nil {
+			return nil, err
+		}
+
+		// Format as "John D." - extract name part before email
+		shortName := formatAuthorShort(author)
+		if !seen[shortName] {
+			seen[shortName] = true
+			authors = append(authors, shortName)
+		}
+	}
+
+	return authors, rows.Err()
+}
+
+// formatAuthorShort converts "John Doe <john@example.com>" to "John D."
+func formatAuthorShort(author string) string {
+	// Remove email part if present
+	name := author
+	if idx := strings.Index(author, "<"); idx > 0 {
+		name = strings.TrimSpace(author[:idx])
+	}
+
+	parts := strings.Fields(name)
+	if len(parts) == 0 {
+		return author
+	}
+
+	if len(parts) == 1 {
+		return parts[0]
+	}
+
+	// First name + last initial
+	firstName := parts[0]
+	lastInitial := string(parts[len(parts)-1][0])
+	return firstName + " " + lastInitial + "."
 }

@@ -206,3 +206,18 @@ func (r *CommitRepo) GetLastProcessedTime() (*time.Time, error) {
 
 	return &lastTime, nil
 }
+
+// UpdateAndMarkUnprocessed updates commit data and marks it as unprocessed
+func (r *CommitRepo) UpdateAndMarkUnprocessed(id int64, message, author, branch string, filesChanged []string, committedAt time.Time) error {
+	filesJSON, err := json.Marshal(filesChanged)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.db.Exec(`
+		UPDATE raw_commits
+		SET message = ?, author = ?, branch = ?, files_changed = ?, committed_at = ?, processed = 0
+		WHERE id = ?
+	`, message, author, branch, string(filesJSON), committedAt, id)
+	return err
+}

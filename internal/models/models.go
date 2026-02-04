@@ -56,4 +56,5 @@ type Task struct {
 
 	// Joined fields
 	ProjectName string
+	Authors     []string // Derived from source_commits -> raw_commits.author
 }

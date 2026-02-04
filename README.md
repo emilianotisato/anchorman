@@ -77,6 +77,59 @@ anchorman
 
 7. **Generate reports** (press `r` in dashboard)
 
+## Commands
+
+### Launch TUI
+
+```bash
+anchorman
+```
+
+### Import Historical Commits
+
+Import existing commits from a git repository:
+
+```bash
+# Navigate to your git repository
+cd ~/Projects/my-project
+
+# Import last 10 commits
+anchorman import 10
+
+# Import commits since a date
+anchorman import 2025-01-15
+
+# Import all commits
+anchorman import
+
+# Import from specific branch
+anchorman import 50 --branch main
+
+# Force re-import (overwrites existing, deletes related tasks)
+anchorman import 10 -f
+```
+
+The repository will be auto-registered if not already tracked. Imported commits are unprocessed - use the TUI to process them into tasks.
+
+### Manage Git Hooks
+
+```bash
+# Install global hooks (auto-track future commits)
+anchorman hooks install
+
+# Remove hooks
+anchorman hooks uninstall
+```
+
+## Report Options
+
+When generating reports, use these toggles in the preview screen:
+
+| Key | Toggle |
+|-----|--------|
+| `t` | Show/hide time estimates |
+| `a` | Show/hide authors |
+
 ## Configuration
 
 Configuration is stored in `~/.anchorman/config.toml`:

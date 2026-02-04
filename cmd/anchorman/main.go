@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -108,14 +110,79 @@ var hooksUninstallCmd = &cobra.Command{
 	},
 }
 
+var importCmd = &cobra.Command{
+	Use:   "import [count|date]",
+	Short: "Import commits from the current git repository",
+	Long: `Import historical commits from the current git repository.
+
+Examples:
+  anchorman import 10          # Last 10 commits
+  anchorman import 2025-01-15  # Commits since date
+  anchorman import             # All commits
+  anchorman import 10 -f       # Force re-import last 10`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		opts := git.ImportOptions{}
+
+		if len(args) > 0 {
+			// Try parse as number first
+			if count, err := strconv.Atoi(args[0]); err == nil {
+				opts.Count = count
+			} else if date, err := time.Parse("2006-01-02", args[0]); err == nil {
+				opts.Since = date
+			} else {
+				fmt.Fprintf(os.Stderr, "Invalid argument: %s (expected number or YYYY-MM-DD)\n", args[0])
+				os.Exit(1)
+			}
+		}
+
+		opts.Branch, _ = cmd.Flags().GetString("branch")
+		opts.Force, _ = cmd.Flags().GetBool("force")
+
+		fmt.Println("Importing commits...")
+
+		result, err := git.Import(opts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Repository: %s\n", result.RepoPath)
+		fmt.Printf("Found: %d commits\n", result.TotalFound)
+		fmt.Printf("Imported: %d\n", result.Imported)
+		fmt.Printf("Skipped: %d (already exist)\n", result.Skipped)
+
+		if opts.Force {
+			fmt.Printf("Updated: %d (force mode)\n", result.Updated)
+			fmt.Printf("Tasks deleted: %d\n", result.TasksDeleted)
+		}
+
+		if result.IsOrphan {
+			fmt.Println("\nNote: Repository is not assigned to a project yet.")
+			fmt.Println("Use the TUI to assign it to a company/project.")
+		}
+
+		if result.NotInScanPath {
+			fmt.Println("\nWarning: Repository path is not in configured scan_paths.")
+			fmt.Println("Future commits won't be auto-tracked until you add the path to config.")
+		}
+
+		fmt.Println("\nDone! Use 'anchorman' to process commits into tasks.")
+	},
+}
+
 func init() {
 	ingestCmd.Flags().Bool("verbose", false, "Print what was recorded")
 
 	hooksCmd.AddCommand(hooksInstallCmd)
 	hooksCmd.AddCommand(hooksUninstallCmd)
 
+	importCmd.Flags().StringP("branch", "b", "", "Specific branch (default: all branches)")
+	importCmd.Flags().BoolP("force", "f", false, "Re-ingest existing commits, mark as unprocessed, delete related tasks")
+
 	rootCmd.AddCommand(ingestCmd)
 	rootCmd.AddCommand(hooksCmd)
+	rootCmd.AddCommand(importCmd)
 }
 
 func main() {
