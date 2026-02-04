@@ -46,12 +46,13 @@ type RawCommit struct {
 }
 
 type Task struct {
-	ID            int64
-	ProjectID     int64
-	Description   string
-	SourceCommits []int64
-	TaskDate      time.Time
-	CreatedAt     time.Time
+	ID             int64
+	ProjectID      int64
+	Description    string
+	SourceCommits  []int64
+	TaskDate       time.Time
+	EstimatedHours float64 // 0.5 increments: 0.5, 1.0, 1.5, etc.
+	CreatedAt      time.Time
 
 	// Joined fields
 	ProjectName string

@@ -3,14 +3,23 @@ package agent
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/emilianohg/anchorman/internal/models"
 )
 
+// TaskResult represents a processed task with its time estimate
+type TaskResult struct {
+	Description    string
+	EstimatedHours float64
+}
+
 type Agent interface {
-	Process(projectName string, commits []models.RawCommit) ([]string, error)
+	Process(projectName string, commits []models.RawCommit) ([]TaskResult, error)
 }
 
 func New(agentType string) (Agent, error) {
@@ -26,7 +35,7 @@ func New(agentType string) (Agent, error) {
 
 type CodexAgent struct{}
 
-func (a *CodexAgent) Process(projectName string, commits []models.RawCommit) ([]string, error) {
+func (a *CodexAgent) Process(projectName string, commits []models.RawCommit) ([]TaskResult, error) {
 	prompt := buildPrompt(projectName, commits)
 
 	// Use codex exec for non-interactive mode, pass prompt via stdin
@@ -46,7 +55,7 @@ func (a *CodexAgent) Process(projectName string, commits []models.RawCommit) ([]
 
 type ClaudeAgent struct{}
 
-func (a *ClaudeAgent) Process(projectName string, commits []models.RawCommit) ([]string, error) {
+func (a *ClaudeAgent) Process(projectName string, commits []models.RawCommit) ([]TaskResult, error) {
 	prompt := buildPrompt(projectName, commits)
 
 	// Use claude -p for non-interactive print mode
@@ -84,13 +93,26 @@ func buildPrompt(projectName string, commits []models.RawCommit) string {
 	sb.WriteString("- Use plain, non-technical language suitable for managers\n")
 	sb.WriteString("- Focus on WHAT was accomplished, not HOW\n")
 	sb.WriteString("- Each task should be a single line starting with a verb (Implemented, Fixed, Added, Updated, etc.)\n")
-	sb.WriteString("\nOutput ONLY the tasks, one per line, starting with '- ':\n")
+	sb.WriteString("\nFor each task, estimate the time spent based on:\n")
+	sb.WriteString("- Number of commits involved\n")
+	sb.WriteString("- Number and types of files changed\n")
+	sb.WriteString("- Complexity implied by commit messages\n")
+	sb.WriteString("\nUse 0.5 hour increments (minimum 0.5h). Examples: 0.5, 1.0, 1.5, 2.0, 2.5, etc.\n")
+	sb.WriteString("\nOutput format: - [X.Xh] Task description\n")
+	sb.WriteString("Examples:\n")
+	sb.WriteString("- [2.0h] Implemented user authentication system\n")
+	sb.WriteString("- [0.5h] Fixed login button styling\n")
+	sb.WriteString("- [1.5h] Refactored database connection handling\n")
+	sb.WriteString("\nOutput ONLY the tasks in this format:\n")
 
 	return sb.String()
 }
 
-func parseResponse(response string) []string {
-	var tasks []string
+// timePattern matches [X.Xh] at the start of a task line
+var timePattern = regexp.MustCompile(`^\[(\d+\.?\d*)h\]\s*`)
+
+func parseResponse(response string) []TaskResult {
+	var tasks []TaskResult
 	lines := strings.Split(response, "\n")
 
 	for _, line := range lines {
@@ -111,8 +133,32 @@ func parseResponse(response string) []string {
 			continue
 		}
 
-		tasks = append(tasks, line)
+		// Extract time estimate and description
+		result := TaskResult{
+			EstimatedHours: 0.5, // default
+		}
+
+		if match := timePattern.FindStringSubmatch(line); match != nil {
+			if hours, err := strconv.ParseFloat(match[1], 64); err == nil {
+				result.EstimatedHours = roundToHalfHour(hours)
+			}
+			result.Description = strings.TrimSpace(timePattern.ReplaceAllString(line, ""))
+		} else {
+			result.Description = line
+		}
+
+		if result.Description != "" {
+			tasks = append(tasks, result)
+		}
 	}
 
 	return tasks
+}
+
+// roundToHalfHour rounds hours to nearest 0.5h (minimum 0.5h)
+func roundToHalfHour(hours float64) float64 {
+	if hours < 0.5 {
+		return 0.5
+	}
+	return math.Round(hours*2) / 2
 }

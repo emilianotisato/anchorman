@@ -16,16 +16,16 @@ func NewTaskRepo(db *sql.DB) *TaskRepo {
 	return &TaskRepo{db: db}
 }
 
-func (r *TaskRepo) Create(projectID int64, description string, sourceCommits []int64, taskDate time.Time) (*models.Task, error) {
+func (r *TaskRepo) Create(projectID int64, description string, sourceCommits []int64, taskDate time.Time, estimatedHours float64) (*models.Task, error) {
 	commitsJSON, err := json.Marshal(sourceCommits)
 	if err != nil {
 		return nil, err
 	}
 
 	result, err := r.db.Exec(`
-		INSERT INTO tasks (project_id, description, source_commits, task_date)
-		VALUES (?, ?, ?, ?)
-	`, projectID, description, string(commitsJSON), taskDate)
+		INSERT INTO tasks (project_id, description, source_commits, task_date, estimated_hours)
+		VALUES (?, ?, ?, ?, ?)
+	`, projectID, description, string(commitsJSON), taskDate, estimatedHours)
 	if err != nil {
 		return nil, err
 	}
@@ -43,12 +43,12 @@ func (r *TaskRepo) GetByID(id int64) (*models.Task, error) {
 	var commitsJSON string
 
 	err := r.db.QueryRow(`
-		SELECT t.id, t.project_id, t.description, t.source_commits, t.task_date, t.created_at, p.name
+		SELECT t.id, t.project_id, t.description, t.source_commits, t.task_date, t.estimated_hours, t.created_at, p.name
 		FROM tasks t
 		JOIN projects p ON p.id = t.project_id
 		WHERE t.id = ?
 	`, id).Scan(
-		&t.ID, &t.ProjectID, &t.Description, &commitsJSON, &t.TaskDate, &t.CreatedAt, &t.ProjectName,
+		&t.ID, &t.ProjectID, &t.Description, &commitsJSON, &t.TaskDate, &t.EstimatedHours, &t.CreatedAt, &t.ProjectName,
 	)
 
 	if err == sql.ErrNoRows {
@@ -67,7 +67,7 @@ func (r *TaskRepo) GetByID(id int64) (*models.Task, error) {
 
 func (r *TaskRepo) GetByProjectAndDateRange(projectID int64, from, to time.Time) ([]models.Task, error) {
 	rows, err := r.db.Query(`
-		SELECT t.id, t.project_id, t.description, t.source_commits, t.task_date, t.created_at, p.name
+		SELECT t.id, t.project_id, t.description, t.source_commits, t.task_date, t.estimated_hours, t.created_at, p.name
 		FROM tasks t
 		JOIN projects p ON p.id = t.project_id
 		WHERE t.project_id = ? AND t.task_date >= ? AND t.task_date <= ?
@@ -83,7 +83,7 @@ func (r *TaskRepo) GetByProjectAndDateRange(projectID int64, from, to time.Time)
 
 func (r *TaskRepo) GetByCompanyAndDateRange(companyID int64, from, to time.Time) ([]models.Task, error) {
 	rows, err := r.db.Query(`
-		SELECT t.id, t.project_id, t.description, t.source_commits, t.task_date, t.created_at, p.name
+		SELECT t.id, t.project_id, t.description, t.source_commits, t.task_date, t.estimated_hours, t.created_at, p.name
 		FROM tasks t
 		JOIN projects p ON p.id = t.project_id
 		WHERE p.company_id = ? AND t.task_date >= ? AND t.task_date <= ?
@@ -99,7 +99,7 @@ func (r *TaskRepo) GetByCompanyAndDateRange(companyID int64, from, to time.Time)
 
 func (r *TaskRepo) GetByDateRange(from, to time.Time) ([]models.Task, error) {
 	rows, err := r.db.Query(`
-		SELECT t.id, t.project_id, t.description, t.source_commits, t.task_date, t.created_at, p.name
+		SELECT t.id, t.project_id, t.description, t.source_commits, t.task_date, t.estimated_hours, t.created_at, p.name
 		FROM tasks t
 		JOIN projects p ON p.id = t.project_id
 		WHERE t.task_date >= ? AND t.task_date <= ?
@@ -120,7 +120,7 @@ func (r *TaskRepo) scanTasks(rows *sql.Rows) ([]models.Task, error) {
 		var commitsJSON string
 
 		if err := rows.Scan(
-			&t.ID, &t.ProjectID, &t.Description, &commitsJSON, &t.TaskDate, &t.CreatedAt, &t.ProjectName,
+			&t.ID, &t.ProjectID, &t.Description, &commitsJSON, &t.TaskDate, &t.EstimatedHours, &t.CreatedAt, &t.ProjectName,
 		); err != nil {
 			return nil, err
 		}

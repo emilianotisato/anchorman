@@ -189,8 +189,8 @@ func (p *Process) runProcessing() tea.Msg {
 		}
 
 		// Create tasks
-		for _, taskDesc := range tasks {
-			_, err := taskRepo.Create(projectID, taskDesc, commitIDs, taskDate)
+		for _, task := range tasks {
+			_, err := taskRepo.Create(projectID, task.Description, commitIDs, taskDate, task.EstimatedHours)
 			if err != nil {
 				return processCompleteMsg{err: fmt.Errorf("failed to create task: %w", err)}
 			}

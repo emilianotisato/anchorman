@@ -1,0 +1,1 @@
+ALTER TABLE tasks ADD COLUMN estimated_hours REAL DEFAULT 0.5;
